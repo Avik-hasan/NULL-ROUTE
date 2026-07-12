@@ -1,0 +1,21 @@
+[Unit]
+Description=Custom VPN Server (Oblivion Protocol)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=/opt/custom-vpn/scripts/server-setup.sh eth0
+ExecStart=/opt/custom-vpn/vpn-server /etc/custom-vpn/server.json
+Restart=on-failure
+RestartSec=3
+# Least privilege: only the caps needed for TUN + routing/NAT.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/custom-vpn
+
+[Install]
+WantedBy=multi-user.target
