@@ -1,0 +1,7 @@
+{
+  "listen": "0.0.0.0:51820",
+  "server_private_key": "REPLACE_WITH_SERVER_PRIVKEY_BASE64",
+  "preshared_key": "REPLACE_WITH_32_BYTE_PSK_BASE64",
+  "tunnel_subnet": "10.66.0.0/24",
+  "exit_interfaces": ["eth0", "eth1"]
+}
