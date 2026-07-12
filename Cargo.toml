@@ -1,0 +1,88 @@
+# Custom VPN v2 — Cargo Workspace Manifest
+# Hyper-secure, commercial-grade personal VPN (Rust + Tauri v2)
+#
+# Virtual workspace: no root package, only members. Shared dependency
+# versions are pinned in [workspace.dependencies] so every crate stays in
+# lock-step and audits are reproducible.
+
+[workspace]
+resolver = "2"
+members = [
+    "vpn-shared",
+    "vpn-core",
+    "vpn-client",
+    "vpn-server",
+    "gui/src-tauri",
+]
+
+# Keep the GUI crate out of `cargo build --workspace` on headless CI where the
+# Tauri toolchain/webview is unavailable. Build it explicitly with
+# `cargo build -p custom-vpn-gui`.
+default-members = [
+    "vpn-shared",
+    "vpn-core",
+    "vpn-client",
+    "vpn-server",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+rust-version = "1.77"
+license = "MIT OR Apache-2.0"
+authors = ["Custom VPN Engineering"]
+repository = "https://example.invalid/custom-vpn"
+
+[workspace.dependencies]
+# --- async runtime & IO ---
+tokio = { version = "1.38", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec", "net"] }
+futures = "0.3"
+bytes = "1.6"
+
+# --- serialization ---
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# --- crypto ---
+# `snow` provides the Noise Protocol Framework (Noise_IKpsk2 pattern).
+snow = { version = "0.9", features = ["ring-resolver"] }
+chacha20poly1305 = "0.10"
+rand = "0.8"
+rand_core = "0.6"
+zeroize = { version = "1.8", features = ["derive"] }
+subtle = "2.6"
+blake2 = "0.10"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+
+# --- error handling & logging ---
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# --- utility ---
+arc-swap = "1.7"
+parking_lot = "0.12"
+once_cell = "1.19"
+ipnet = "2.9"
+etherparse = "0.15"
+
+# --- Windows platform (client only) ---
+# The `windows` crate exposes WFP (Windows Filtering Platform), Named Pipe
+# security descriptors, token/SID APIs, and IP Helper routing calls.
+windows = { version = "0.58" }
+windows-sys = { version = "0.59" }
+widestring = "1.1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"   # REQUIRED: we rely on catch_unwind for fail-safe cleanup.
+strip = true
+overflow-checks = true
+
+[profile.release.package.vpn-core]
+# Crypto must keep overflow checks even in release.
+overflow-checks = true
