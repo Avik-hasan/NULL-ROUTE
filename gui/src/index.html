@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NULL ROUTE // OBLIVION PROTOCOL</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="scanlines"></div>
+  <div class="grid-bg"></div>
+
+  <!-- Custom titlebar (frameless window) -->
+  <header class="titlebar" data-tauri-drag-region>
+    <div class="brand">
+      <span class="logo-glyph">◈</span>
+      <span class="brand-name">NULL_<span class="accent">ROUTE</span></span>
+      <span class="brand-sub">// OBLIVION PROTOCOL</span>
+    </div>
+    <div class="win-ctrl">
+      <button id="min" class="wc">–</button>
+      <button id="max" class="wc">□</button>
+      <button id="close" class="wc wc-close">✕</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <!-- LEFT: engage toggle + node selector -->
+    <section class="panel engage-panel">
+      <div class="engage-wrap">
+        <svg class="engage-ring" viewBox="0 0 240 240" aria-hidden="true">
+          <defs>
+            <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#00f3ff"/>
+              <stop offset="100%" stop-color="#00ff66"/>
+            </linearGradient>
+          </defs>
+          <circle class="ring-track" cx="120" cy="120" r="104"/>
+          <circle class="ring-progress" cx="120" cy="120" r="104"/>
+          <g class="ring-ticks" id="ringTicks"></g>
+        </svg>
+        <button id="engageBtn" class="engage-btn state-off">
+          <span class="engage-icon">⏻</span>
+          <span class="engage-label">ENGAGE<br/>SYSTEM</span>
+        </button>
+      </div>
+
+      <div class="node-pick">
+        <label class="field-label">EXIT NODE</label>
+        <div class="select-wrap">
+          <select id="nodeSelect">
+            <option value="0">OBLIVION-1 // Reykjavík</option>
+            <option value="1">OBLIVION-4 // Zürich</option>
+            <option value="2">SPECTRE-7 // Singapore</option>
+          </select>
+        </div>
+        <button id="rotateBtn" class="ghost-btn">↻ FORCE IP HOP</button>
+      </div>
+    </section>
+
+    <!-- CENTER: status + telemetry canvas -->
+    <section class="panel telemetry-panel">
+      <div class="status-row">
+        <div class="status-chip" id="stateChip">
+          <span class="dot"></span><span id="stateText">DISCONNECTED</span>
+        </div>
+        <div class="ip-hopper">
+          <span class="hopper-label">ROUTING:</span>
+          <span id="exitIp" class="hopper-text">AWAITING CONNECTION...</span>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">DOWN</div>
+          <div class="metric-val" id="downVal">0.0<span>Mb/s</span></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">UP</div>
+          <div class="metric-val" id="upVal">0.0<span>Mb/s</span></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">PING</div>
+          <div class="metric-val" id="pingVal">–<span>ms</span></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">UPTIME</div>
+          <div class="metric-val" id="uptimeVal">00:00:00</div>
+        </div>
+      </div>
+
+      <canvas id="chart" class="chart"></canvas>
+      <div class="chart-legend">
+        <span class="lg lg-down">● DOWNLINK</span>
+        <span class="lg lg-up">● UPLINK</span>
+        <span class="lg lg-ping">● LATENCY</span>
+      </div>
+    </section>
+  </main>
+
+  <!-- BOTTOM: diagnostics console -->
+  <section class="panel console-panel">
+    <div class="console-head">
+      <span>SYSTEM DIAGNOSTICS LOG</span>
+      <span class="blink">_</span>
+    </div>
+    <div id="console" class="console-body"></div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
