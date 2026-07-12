@@ -1,0 +1,9 @@
+/target
+**/target
+Cargo.lock
+gui/src-tauri/gen
+gui/src-tauri/icons/*.png
+*.log
+config/*.json
+!config/*.example.json
+.DS_Store
