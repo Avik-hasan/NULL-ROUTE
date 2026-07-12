@@ -1,0 +1,27 @@
+{
+  "client_private_key": "9UixO79vxtvexAMhFPD5mC0bLJU6G1KXPBVOZVeDp8M=",
+  "preshared_key": "w2wAcLZZytErMaisASUBoVcCrjFpiSyBrsLgh+p7YeM=",
+  "hop_interval_secs": 300,
+  "block_webrtc": true,
+  "kill_switch": true,
+  "nodes": [
+    {
+      "codename": "OBLIVION-1",
+      "endpoint": "185.213.44.9:51820",
+      "server_public_key": "RiCau6sxo3SpaWNzrQeH401D24JaCHhvrVKy1pQRrws=",
+      "region": "Reykjavik"
+    },
+    {
+      "codename": "OBLIVION-4",
+      "endpoint": "146.70.12.51:51820",
+      "server_public_key": "rfjTQb8PcnnbhsM7OgYCPwJxEwvByvTJou3iA466GAU=",
+      "region": "Zürich"
+    },
+    {
+      "codename": "SPECTRE-7",
+      "endpoint": "91.132.139.7:51820",
+      "server_public_key": "e7otYfadLbchueUQxjjptGufISNMXfn4Zd00cvApBGY=",
+      "region": "Singapore"
+    }
+  ]
+}
