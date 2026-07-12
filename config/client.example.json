@@ -1,0 +1,21 @@
+{
+  "nodes": [
+    {
+      "codename": "OBLIVION-1",
+      "endpoint": "198.51.100.11:51820",
+      "server_public_key": "REPLACE_WITH_SERVER_PUBKEY_BASE64",
+      "region": "Reykjavík, IS"
+    },
+    {
+      "codename": "OBLIVION-4",
+      "endpoint": "203.0.113.24:51820",
+      "server_public_key": "REPLACE_WITH_SERVER_PUBKEY_BASE64",
+      "region": "Zürich, CH"
+    }
+  ],
+  "client_private_key": "REPLACE_WITH_CLIENT_PRIVKEY_BASE64",
+  "preshared_key": "REPLACE_WITH_32_BYTE_PSK_BASE64",
+  "hop_interval_secs": 300,
+  "block_webrtc": true,
+  "kill_switch": true
+}
