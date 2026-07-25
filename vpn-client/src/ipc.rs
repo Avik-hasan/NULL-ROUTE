@@ -24,7 +24,10 @@
 
 #![cfg(windows)]
 
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use tracing::{info, warn};
 use vpn_shared::{Result, VpnError, PIPE_NAME};
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE, HLOCAL};
@@ -231,4 +234,83 @@ pub fn create_secured_server(sec: &PipeSecurity, first: bool) -> Result<NamedPip
     }
     .map_err(|e| VpnError::Ipc(format!("create pipe: {e}")))?;
     Ok(server)
+}
+
+/// Accept loop. Each accepted client is handed to `handler` on its own task.
+pub async fn serve<F, Fut>(handler: F) -> Result<()>
+where
+    F: Fn(NamedPipeServer) -> Fut + Send + Sync + Clone + 'static,
+    Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+{
+    let sec = build_pipe_security()?;
+    info!(pipe = PIPE_NAME, "named pipe secured: SYSTEM + interactive user only");
+
+    let mut server: Option<NamedPipeServer> = Some(create_secured_server(&sec, true)?);
+    loop {
+        let srv = match server.take() {
+            Some(s) => s,
+            None => match create_secured_server(&sec, true) {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, "failed to (re)create pipe instance; retrying");
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+            },
+        };
+
+        if let Err(e) = srv.connect().await {
+            warn!(error = %e, "pipe connect failed; retrying");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            continue;
+        }
+
+        match create_secured_server(&sec, false) {
+            Ok(next) => server = Some(next),
+            Err(e) => {
+                warn!(error = %e, "could not pre-create next pipe instance; will rebuild");
+                server = None;
+            }
+        }
+
+        let h = handler.clone();
+        tokio::spawn(async move {
+            if let Err(e) = h(srv).await {
+                warn!(error = %e, "ipc client handler ended with error");
+            }
+        });
+    }
+}
+
+/// Read a single length-delimited (u32 BE) JSON message.
+pub async fn read_frame(pipe: &mut NamedPipeServer) -> Result<Vec<u8>> {
+    let mut len_buf = [0u8; 4];
+    pipe.read_exact(&mut len_buf)
+        .await
+        .map_err(|e| VpnError::Ipc(format!("read len: {e}")))?;
+    let len = u32::from_be_bytes(len_buf) as usize;
+    const MAX_FRAME: usize = 1 << 20;
+    if len > MAX_FRAME {
+        return Err(VpnError::Ipc(format!("frame too large: {len}")));
+    }
+    let mut buf = vec![0u8; len];
+    pipe.read_exact(&mut buf)
+        .await
+        .map_err(|e| VpnError::Ipc(format!("read body: {e}")))?;
+    Ok(buf)
+}
+
+/// Write a single length-delimited JSON message.
+pub async fn write_frame(pipe: &mut NamedPipeServer, body: &[u8]) -> Result<()> {
+    let len = u32::try_from(body.len()).map_err(|_| VpnError::Ipc("frame exceeds u32".into()))?;
+    pipe.write_all(&len.to_be_bytes())
+        .await
+        .map_err(|e| VpnError::Ipc(format!("write len: {e}")))?;
+    pipe.write_all(body)
+        .await
+        .map_err(|e| VpnError::Ipc(format!("write body: {e}")))?;
+    pipe.flush()
+        .await
+        .map_err(|e| VpnError::Ipc(format!("flush: {e}")))?;
+    Ok(())
 }
