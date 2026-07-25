@@ -9,8 +9,11 @@
 //! There are no `unwrap()`/`expect()` calls: every `snow`/cipher error is mapped
 //! into [`VpnError`].
 
-use snow::{Builder, HandshakeState, Keypair};
+use std::sync::atomic::{AtomicU64, Ordering};
+use snow::{Builder, HandshakeState, Keypair, StatelessTransportState};
+use zeroize::Zeroize;
 
+use crate::protocol::{AntiReplayWindow, Header, PacketKind, HEADER_LEN};
 use crate::NOISE_PARAMS;
 use vpn_shared::{Result, VpnError};
 
@@ -62,4 +65,45 @@ pub fn build_handshake(
     }
     .map_err(|e| VpnError::Handshake(format!("handshake build failed: {e}")))?;
     Ok(hs)
+}
+
+/// An established, encrypted session over the data plane.
+///
+/// `session_id` disambiguates concurrent sessions during a seamless handover
+/// (old + new session are live simultaneously for a few RTTs).
+pub struct Session {
+    session_id: u32,
+    transport: StatelessTransportState,
+    tx_counter: AtomicU64,
+    replay: AntiReplayWindow,
+}
+
+impl Session {
+    /// Promote a completed handshake into a transport session.
+    pub fn from_handshake(session_id: u32, hs: HandshakeState) -> Result<Self> {
+        if !hs.is_handshake_finished() {
+            return Err(VpnError::Handshake("handshake not finished".into()));
+        }
+        let transport = hs
+            .into_stateless_transport_mode()
+            .map_err(|e| VpnError::Handshake(format!("into_stateless_transport_mode: {e}")))?;
+        Ok(Self {
+            session_id,
+            transport,
+            tx_counter: AtomicU64::new(1),
+            replay: AntiReplayWindow::new(),
+        })
+    }
+
+    pub fn session_id(&self) -> u32 {
+        self.session_id
+    }
+
+    pub fn rx_high_water(&self) -> u64 {
+        self.replay.highest()
+    }
+
+    pub fn tx_high_water(&self) -> u64 {
+        self.tx_counter.load(Ordering::SeqCst)
+    }
 }
