@@ -28,3 +28,19 @@ pub struct Telemetry {
     /// Seconds since connect.
     pub uptime_secs: u64,
 }
+
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self {
+            state: ConnState::Disconnected,
+            active_node: None,
+            exit_ip: None,
+            down_bps: 0,
+            up_bps: 0,
+            latency_ms: 0.0,
+            bytes_rx: 0,
+            bytes_tx: 0,
+            uptime_secs: 0,
+        }
+    }
+}
