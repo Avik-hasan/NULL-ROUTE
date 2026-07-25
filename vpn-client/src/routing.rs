@@ -117,10 +117,63 @@ fn query_default_route() -> Result<(Ipv4Addr, u32)> {
     }
 }
 
-fn create_route(_dst: Ipv4Addr, _prefix: u8, _next_hop: Ipv4Addr, _ifindex: u32) -> Result<()> {
-    Ok(())
+fn create_route(dst: Ipv4Addr, prefix: u8, next_hop: Ipv4Addr, ifindex: u32) -> Result<()> {
+    use windows::Win32::Foundation::{ERROR_OBJECT_ALREADY_EXISTS, ERROR_SUCCESS};
+    use windows::Win32::NetworkManagement::IpHelper::{
+        CreateIpForwardEntry2, InitializeIpForwardEntry, MIB_IPFORWARD_ROW2,
+    };
+
+    unsafe {
+        let mut row = MIB_IPFORWARD_ROW2::default();
+        InitializeIpForwardEntry(&mut row);
+        row.InterfaceIndex = ifindex;
+        row.DestinationPrefix.PrefixLength = prefix;
+        set_sockaddr_v4(&mut row.DestinationPrefix.Prefix, dst);
+        set_sockaddr_v4(&mut row.NextHop, next_hop);
+        row.Metric = 1;
+        row.Protocol = std::mem::transmute(3_i32);
+
+        let rc = CreateIpForwardEntry2(&row);
+        if rc.0 != ERROR_SUCCESS.0 && rc.0 != ERROR_OBJECT_ALREADY_EXISTS.0 {
+            return Err(VpnError::Routing(format!(
+                "CreateIpForwardEntry2({dst}/{prefix}): {:#x}",
+                rc.0
+            )));
+        }
+        Ok(())
+    }
 }
 
-fn delete_route(_dst: Ipv4Addr, _prefix: u8, _ifindex: u32) -> Result<()> {
-    Ok(())
+fn delete_route(dst: Ipv4Addr, prefix: u8, ifindex: u32) -> Result<()> {
+    use windows::Win32::Foundation::{ERROR_NOT_FOUND, ERROR_SUCCESS};
+    use windows::Win32::NetworkManagement::IpHelper::{DeleteIpForwardEntry2, MIB_IPFORWARD_ROW2};
+
+    unsafe {
+        let mut row = MIB_IPFORWARD_ROW2::default();
+        row.InterfaceIndex = ifindex;
+        row.DestinationPrefix.PrefixLength = prefix;
+        set_sockaddr_v4(&mut row.DestinationPrefix.Prefix, dst);
+        let rc = DeleteIpForwardEntry2(&row);
+        if rc.0 != ERROR_SUCCESS.0 && rc.0 != ERROR_NOT_FOUND.0 {
+            return Err(VpnError::Routing(format!(
+                "DeleteIpForwardEntry2({dst}/{prefix}): {:#x}",
+                rc.0
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn set_sockaddr_v4(
+    addr: &mut windows::Win32::Networking::WinSock::SOCKADDR_INET,
+    ip: Ipv4Addr,
+) {
+    use windows::Win32::Networking::WinSock::{AF_INET, IN_ADDR, IN_ADDR_0};
+    addr.si_family = AF_INET;
+    addr.Ipv4.sin_family = AF_INET;
+    addr.Ipv4.sin_addr = IN_ADDR {
+        S_un: IN_ADDR_0 {
+            S_addr: u32::from_ne_bytes(ip.octets()),
+        },
+    };
 }
