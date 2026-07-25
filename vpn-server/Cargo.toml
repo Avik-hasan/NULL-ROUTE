@@ -1,0 +1,31 @@
+[package]
+name = "vpn-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vpn-server"
+path = "src/main.rs"
+
+[dependencies]
+vpn-shared = { path = "../vpn-shared" }
+vpn-core = { path = "../vpn-core" }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+arc-swap = { workspace = true }
+parking_lot = { workspace = true }
+ipnet = { workspace = true }
+
+# TUN device ioctls (Linux server data plane).
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
