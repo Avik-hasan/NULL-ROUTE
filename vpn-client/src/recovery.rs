@@ -16,7 +16,8 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use parking_lot::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+use vpn_shared::Result;
 
 type CleanupAction = Box<dyn FnMut() + Send + 'static>;
 
@@ -57,4 +58,49 @@ impl CleanupRegistry {
         }
         info!("recovery: network state restored — internet access preserved");
     }
+}
+
+/// Install a panic hook + Ctrl-C handler that both funnel into `run_cleanup`.
+pub fn install_guards(registry: CleanupRegistry) {
+    let reg = registry.clone();
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        error!(panic = %info, "PANIC caught — running fail-safe cleanup");
+        reg.run_cleanup();
+        default_hook(info);
+    }));
+
+    let reg2 = registry.clone();
+    if let Err(e) = ctrlc_like(move || reg2.run_cleanup()) {
+        warn!(error = %e, "could not install signal handler");
+    }
+}
+
+/// Run an async entrypoint inside `catch_unwind`, guaranteeing cleanup runs even
+/// if the tokio runtime task panics at the top level.
+pub fn run_guarded<F>(registry: &CleanupRegistry, body: F) -> Result<()>
+where
+    F: FnOnce() -> Result<()>,
+{
+    let outcome = catch_unwind(AssertUnwindSafe(body));
+    match outcome {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            error!(error = %e, "runtime returned error — cleaning up");
+            registry.run_cleanup();
+            Err(e)
+        }
+        Err(_) => {
+            error!("runtime PANICKED — cleaning up");
+            registry.run_cleanup();
+            Err(vpn_shared::VpnError::InvalidState(
+                "runtime panicked; state restored".into(),
+            ))
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn ctrlc_like<F: Fn() + Send + Sync + 'static>(_f: F) -> Result<()> {
+    Ok(())
 }
