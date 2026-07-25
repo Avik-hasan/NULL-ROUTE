@@ -18,6 +18,8 @@ mod recovery;
 #[cfg(windows)]
 mod routing;
 #[cfg(windows)]
+mod tunnel;
+#[cfg(windows)]
 mod wfp;
 
 fn main() {}
