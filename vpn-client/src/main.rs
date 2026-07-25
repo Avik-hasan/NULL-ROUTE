@@ -10,6 +10,7 @@
 
 #![cfg_attr(not(windows), allow(unused))]
 
+mod connection;
 #[cfg(windows)]
 mod dns;
 #[cfg(windows)]
