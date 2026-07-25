@@ -4,6 +4,7 @@
 //! TCP MSS clamping logic shared between the client and server binaries.
 
 pub mod crypto;
+pub mod mss_clamp;
 pub mod protocol;
 
 /// The Noise protocol pattern string used across all handshakes.
