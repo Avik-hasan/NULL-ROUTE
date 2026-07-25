@@ -13,6 +13,7 @@
 //! counter (see `crypto::nonce_from_counter`), and we additionally gate inbound
 //! packets through [`AntiReplayWindow`] to reject duplicates and stale frames.
 
+use parking_lot::Mutex;
 use vpn_shared::{Result, VpnError};
 
 /// Packet kinds on the data plane.
@@ -73,5 +74,117 @@ impl Header {
             buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11], buf[12],
         ]);
         Ok(Self { kind, session_id, counter })
+    }
+}
+
+/// Window size in packets. 64 fits in a single `u64` bitmap word.
+pub const REPLAY_WINDOW: u64 = 64;
+
+/// Thread-safe anti-replay sliding window (RFC 6479 / RFC 4303 §3.4.3 style).
+///
+/// * Accepts out-of-order packets within `REPLAY_WINDOW` of the highest seen.
+/// * Silently drops exact duplicates (bit already set).
+/// * Silently drops packets that trail more than `REPLAY_WINDOW` behind.
+///
+/// The bit for the highest counter is the LSB (bit 0). Older counters occupy
+/// higher bits. Advancing the window shifts the bitmap left.
+#[derive(Debug)]
+pub struct AntiReplayWindow {
+    inner: Mutex<WindowState>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WindowState {
+    /// Highest counter accepted so far. `0` means "nothing accepted yet".
+    highest: u64,
+    /// Bitmap of the `REPLAY_WINDOW` counters ending at `highest`.
+    bitmap: u64,
+    /// Whether any packet has been accepted (distinguishes counter 0 legitimacy).
+    seeded: bool,
+}
+
+impl Default for AntiReplayWindow {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AntiReplayWindow {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(WindowState { highest: 0, bitmap: 0, seeded: false }),
+        }
+    }
+
+    /// Read-only pre-authentication gate.
+    pub fn check(&self, counter: u64) -> Result<()> {
+        let st = self.inner.lock();
+        if !st.seeded {
+            return Ok(());
+        }
+        if counter > st.highest {
+            return Ok(());
+        }
+        let offset = st.highest - counter;
+        if offset >= REPLAY_WINDOW {
+            return Err(VpnError::Replay {
+                counter,
+                floor: st.highest.saturating_sub(REPLAY_WINDOW - 1),
+            });
+        }
+        if st.bitmap & (1u64 << offset) != 0 {
+            return Err(VpnError::Replay {
+                counter,
+                floor: st.highest.saturating_sub(REPLAY_WINDOW - 1),
+            });
+        }
+        Ok(())
+    }
+
+    /// Commit an inbound counter to the window *after* it has been authenticated.
+    #[inline]
+    pub fn commit(&self, counter: u64) -> Result<()> {
+        self.validate(counter)
+    }
+
+    pub fn validate(&self, counter: u64) -> Result<()> {
+        let mut st = self.inner.lock();
+        if !st.seeded {
+            st.seeded = true;
+            st.highest = counter;
+            st.bitmap = 1;
+            return Ok(());
+        }
+        if counter > st.highest {
+            let shift = counter - st.highest;
+            if shift >= REPLAY_WINDOW {
+                st.bitmap = 1;
+            } else {
+                st.bitmap = (st.bitmap << shift) | 1;
+            }
+            st.highest = counter;
+            Ok(())
+        } else {
+            let offset = st.highest - counter;
+            if offset >= REPLAY_WINDOW {
+                return Err(VpnError::Replay {
+                    counter,
+                    floor: st.highest.saturating_sub(REPLAY_WINDOW - 1),
+                });
+            }
+            let mask = 1u64 << offset;
+            if st.bitmap & mask != 0 {
+                return Err(VpnError::Replay {
+                    counter,
+                    floor: st.highest.saturating_sub(REPLAY_WINDOW - 1),
+                });
+            }
+            st.bitmap |= mask;
+            Ok(())
+        }
+    }
+
+    pub fn highest(&self) -> u64 {
+        self.inner.lock().highest
     }
 }
