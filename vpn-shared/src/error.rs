@@ -21,4 +21,34 @@ pub enum VpnError {
 
     #[error("handshake failed: {0}")]
     Handshake(String),
+
+    #[error("replayed or stale packet dropped (counter={counter}, window_floor={floor})")]
+    Replay { counter: u64, floor: u64 },
+
+    #[error("packet malformed: {0}")]
+    MalformedPacket(String),
+
+    #[error("ipc protocol violation: {0}")]
+    Ipc(String),
+
+    #[error("access denied constructing security descriptor: {0}")]
+    SecurityDescriptor(String),
+
+    #[error("windows filtering platform error: {0}")]
+    Wfp(String),
+
+    #[error("routing table error: {0}")]
+    Routing(String),
+
+    #[error("seamless handover failed: {0}")]
+    Handover(String),
+
+    #[error("configuration error: {0}")]
+    Config(String),
+
+    #[error("operation timed out after {0} ms")]
+    Timeout(u64),
+
+    #[error("invalid state: {0}")]
+    InvalidState(String),
 }
