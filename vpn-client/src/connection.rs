@@ -8,14 +8,14 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::interval;
-use tracing::{info, warn};
+use tracing::warn;
 
 use vpn_core::crypto::{build_handshake, Role, SecretKey, Session};
 use vpn_core::mss_clamp;
@@ -92,7 +92,7 @@ pub async fn connect(
     let _ = logs.send(LogEvent::now(LogLevel::Info, format!("DIALING {}", node.codename)));
 
     let local_priv = SecretKey(b64(&cfg.client_private_key)?);
-    let remote_pub = b64(&node.server_public_key)?;
+    let _remote_pub = b64(&node.server_public_key)?;
     let psk = SecretKey(b64(&cfg.preshared_key)?);
 
     let server_kp = vpn_core::crypto::generate_static_keypair()
@@ -258,7 +258,7 @@ fn spawn_hopper(handle: ConnectionHandle, cfg: Arc<ClientConfig>) {
 }
 
 async fn establish_secondary(cfg: &ClientConfig, node_index: usize) -> Result<Session> {
-    let node = &cfg.nodes[node_index];
+    let _node = &cfg.nodes[node_index];
     let local_priv = SecretKey(b64(&cfg.client_private_key)?);
     let psk = SecretKey(b64(&cfg.preshared_key)?);
 

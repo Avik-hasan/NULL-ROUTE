@@ -26,14 +26,14 @@ mod wfp;
 use std::sync::Arc;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
 use connection::ConnectionHandle;
 use recovery::CleanupRegistry;
 use vpn_shared::config::ClientConfig;
 use vpn_shared::ipc::{IpcCommand, IpcResponse};
-use vpn_shared::telemetry::{ConnState, LogEvent, LogLevel, Telemetry};
-use vpn_shared::{Result, VpnError, PROTOCOL_VERSION};
+use vpn_shared::telemetry::{ConnState, LogEvent, Telemetry};
+use vpn_shared::{Result, PROTOCOL_VERSION};
 
 /// Global service state shared across IPC client connections.
 #[derive(Clone)]
@@ -81,15 +81,14 @@ impl ServiceState {
                 }
             }
             IpcCommand::Connect { node_index } => {
-                let mut guard = self.handle.lock();
-                if guard.is_some() {
+                if self.handle.lock().is_some() {
                     return Ok(IpcResponse::Error {
                         message: "already connected; disconnect first".into(),
                     });
                 }
                 match connection::connect(self.config.clone(), node_index, log_tx).await {
                     Ok(h) => {
-                        *guard = Some(h);
+                        *self.handle.lock() = Some(h);
                         Ok(IpcResponse::Ack)
                     }
                     Err(e) => Ok(IpcResponse::Error {
@@ -98,8 +97,7 @@ impl ServiceState {
                 }
             }
             IpcCommand::Disconnect => {
-                let mut guard = self.handle.lock();
-                if guard.take().is_some() {
+                if self.handle.lock().take().is_some() {
                     self.registry.run_cleanup();
                 }
                 Ok(IpcResponse::Ack)
@@ -118,4 +116,98 @@ impl ServiceState {
     }
 }
 
-fn main() {}
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
+    info!("vpn-client starting up...");
+
+    let registry = CleanupRegistry::new();
+    recovery::install_guards(registry.clone());
+
+    #[cfg(windows)]
+    {
+        if let Ok(wfp_engine) = wfp::WfpEngine::open() {
+            let _ = wfp_engine.block_ipv6_outbound();
+            let _ = wfp_engine.add_webrtc_blackhole(&dns::webrtc_stun_blacklist());
+            std::mem::forget(wfp_engine);
+        }
+    }
+
+    let config = ClientConfig {
+        nodes: vec![
+            vpn_shared::config::NodeConfig {
+                codename: "OBLIVION-1".into(),
+                endpoint: connection::loopback(51820),
+                server_public_key: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=".into(),
+                region: "US-East".into(),
+            },
+            vpn_shared::config::NodeConfig {
+                codename: "OBLIVION-2".into(),
+                endpoint: connection::loopback(51821),
+                server_public_key: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=".into(),
+                region: "EU-West".into(),
+            },
+        ],
+        client_private_key: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=".into(),
+        preshared_key: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=".into(),
+        hop_interval_secs: 30,
+        block_webrtc: true,
+        kill_switch: true,
+    };
+    let state = ServiceState::new(config, registry);
+
+    #[cfg(windows)]
+    {
+        info!("serving IPC named pipe...");
+        let st = state.clone();
+        ipc::serve(move |mut pipe| {
+            let st = st.clone();
+            async move {
+                let (log_tx, mut log_rx) = mpsc::unbounded_channel::<LogEvent>();
+                loop {
+                    tokio::select! {
+                        Some(ev) = log_rx.recv() => {
+                            if let Ok(json) = serde_json::to_vec(&IpcResponse::LogLine(ev)) {
+                                if let Err(e) = ipc::write_frame(&mut pipe, &json).await {
+                                    warn!(error = %e, "ipc log write error");
+                                    break;
+                                }
+                            }
+                        }
+                        res = ipc::read_frame(&mut pipe) => {
+                            match res {
+                                Ok(frame) => {
+                                    if let Ok(cmd) = serde_json::from_slice::<IpcCommand>(&frame) {
+                                        let resp = st.dispatch(cmd, log_tx.clone()).await.unwrap_or_else(|e| {
+                                            IpcResponse::Error { message: e.to_string() }
+                                        });
+                                        if let Ok(json) = serde_json::to_vec(&resp) {
+                                            if let Err(e) = ipc::write_frame(&mut pipe, &json).await {
+                                                warn!(error = %e, "ipc response write error");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(error = %e, "client disconnected");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+        })
+        .await?;
+    }
+
+    #[cfg(not(windows))]
+    {
+        warn!("named pipe IPC is only supported on Windows; running idle");
+        tokio::signal::ctrl_c().await.ok();
+    }
+
+    Ok(())
+}
