@@ -100,6 +100,35 @@ where
     }
 }
 
+/// Minimal cross-toolchain Ctrl-C hook without an extra dependency.
+#[cfg(windows)]
+fn ctrlc_like<F: Fn() + Send + Sync + 'static>(f: F) -> Result<()> {
+    use std::sync::OnceLock;
+    static HANDLER: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+    let _ = HANDLER.set(Box::new(move || f()));
+
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::System::Console::{
+        SetConsoleCtrlHandler, CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_SHUTDOWN_EVENT,
+    };
+    unsafe extern "system" fn handler(ctrl_type: u32) -> BOOL {
+        if matches!(
+            ctrl_type,
+            CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_SHUTDOWN_EVENT
+        ) {
+            if let Some(h) = HANDLER.get() {
+                h();
+            }
+        }
+        BOOL(1)
+    }
+    unsafe {
+        SetConsoleCtrlHandler(Some(handler), true)
+            .map_err(|e| vpn_shared::VpnError::InvalidState(format!("SetConsoleCtrlHandler: {e}")))?;
+    }
+    Ok(())
+}
+
 #[cfg(not(windows))]
 fn ctrlc_like<F: Fn() + Send + Sync + 'static>(_f: F) -> Result<()> {
     Ok(())
