@@ -9,6 +9,8 @@
 #![cfg(windows)]
 
 use std::net::Ipv4Addr;
+use tracing::info;
+use vpn_shared::{Result, VpnError};
 
 /// DNS servers advertised to the OS once the tunnel is up. These are reachable
 /// only *inside* the tunnel (the server proxies them), so they cannot leak.
@@ -41,4 +43,88 @@ impl DnsSnapshot {
     pub fn new(tunnel_ifindex: u32) -> Self {
         Self { tunnel_ifindex, prior_servers: Vec::new(), applied: false }
     }
+
+    /// Capture the tunnel adapter's current DNS servers, then point it at the
+    /// in-tunnel resolvers. Shells out to `netsh` (documented + auditable) to
+    /// avoid the Windows-version-gated `SetInterfaceDnsSettings` symbol.
+    pub fn apply(&mut self) -> Result<()> {
+        self.prior_servers = read_dns_servers(self.tunnel_ifindex).unwrap_or_default();
+        for (i, dns) in TUNNEL_DNS.iter().enumerate() {
+            let action = if i == 0 { "set" } else { "add" };
+            run_netsh(&[
+                "interface", "ipv4", action, "dnsservers",
+                &format!("name={}", self.tunnel_ifindex),
+                &format!("address={dns}"),
+                if i == 0 { "static" } else { "index=2" },
+            ])?;
+        }
+        self.applied = true;
+        info!(prior = self.prior_servers.len(), "dns: tunnel resolvers pinned; ISP DNS bypassed");
+        Ok(())
+    }
+
+    /// Restore the tunnel adapter's DNS to exactly what it had before (or DHCP
+    /// if it had none). Idempotent; safe to call from both graceful disconnect
+    /// and the fail-safe recovery registry.
+    pub fn restore(&mut self) -> Result<()> {
+        if !self.applied {
+            return Ok(());
+        }
+        let name = format!("name={}", self.tunnel_ifindex);
+        if self.prior_servers.is_empty() {
+            run_netsh(&["interface", "ipv4", "set", "dnsservers", &name, "dhcp"])?;
+        } else {
+            for (i, dns) in self.prior_servers.iter().enumerate() {
+                let action = if i == 0 { "set" } else { "add" };
+                run_netsh(&[
+                    "interface", "ipv4", action, "dnsservers",
+                    &name,
+                    &format!("address={dns}"),
+                    if i == 0 { "static" } else { "index=2" },
+                ])?;
+            }
+        }
+        self.applied = false;
+        info!("dns: original tunnel-adapter resolvers restored");
+        Ok(())
+    }
+}
+
+/// Best-effort read of an interface's currently-configured IPv4 DNS servers.
+fn read_dns_servers(ifindex: u32) -> Result<Vec<Ipv4Addr>> {
+    let out = std::process::Command::new("netsh")
+        .args([
+            "interface",
+            "ipv4",
+            "show",
+            "dnsservers",
+            &format!("name={ifindex}"),
+        ])
+        .output()
+        .map_err(|e| VpnError::Routing(format!("spawn netsh: {e}")))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut servers = Vec::new();
+    for tok in text.split(|c: char| !(c.is_ascii_digit() || c == '.')) {
+        if let Ok(ip) = tok.parse::<Ipv4Addr>() {
+            if !servers.contains(&ip) {
+                servers.push(ip);
+            }
+        }
+    }
+    Ok(servers)
+}
+
+fn run_netsh(args: &[&str]) -> Result<()> {
+    let out = std::process::Command::new("netsh")
+        .args(args)
+        .output()
+        .map_err(|e| VpnError::Routing(format!("spawn netsh: {e}")))?;
+    if !out.status.success() {
+        return Err(VpnError::Routing(format!(
+            "netsh {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        )));
+    }
+    Ok(())
 }
