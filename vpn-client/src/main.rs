@@ -11,6 +11,8 @@
 #![cfg_attr(not(windows), allow(unused))]
 
 #[cfg(windows)]
+mod dns;
+#[cfg(windows)]
 mod ipc;
 mod recovery;
 #[cfg(windows)]
