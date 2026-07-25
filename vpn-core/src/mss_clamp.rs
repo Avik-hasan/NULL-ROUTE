@@ -134,3 +134,46 @@ fn fix_tcp_checksum_u16(buf: &mut [u8], tcp: usize, old: u16, new: u16) {
     buf[ck_off] = b[0];
     buf[ck_off + 1] = b[1];
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal IPv4+TCP SYN with a single MSS option = 1460.
+    fn syn_with_mss(mss: u16) -> Vec<u8> {
+        let mut p = vec![0u8; 20 + 24];
+        p[0] = 0x45; // v4, ihl=5
+        p[9] = IPV4_PROTO_TCP;
+        // TCP at offset 20; data offset = 6 words (24 bytes) to fit MSS option.
+        p[20 + 12] = 6 << 4;
+        p[20 + 13] = TCP_FLAG_SYN;
+        // options: MSS
+        p[20 + 20] = TCP_OPT_MSS;
+        p[20 + 21] = 4;
+        let b = mss.to_be_bytes();
+        p[20 + 22] = b[0];
+        p[20 + 23] = b[1];
+        p
+    }
+
+    #[test]
+    fn clamps_when_above() {
+        let mut p = syn_with_mss(1460);
+        assert!(clamp_ipv4_tcp_mss(&mut p, 1300));
+        let got = u16::from_be_bytes([p[20 + 22], p[20 + 23]]);
+        assert_eq!(got, 1300);
+    }
+
+    #[test]
+    fn leaves_when_below() {
+        let mut p = syn_with_mss(1200);
+        assert!(!clamp_ipv4_tcp_mss(&mut p, 1300));
+    }
+
+    #[test]
+    fn ignores_non_syn() {
+        let mut p = syn_with_mss(1460);
+        p[20 + 13] = 0x10; // ACK only
+        assert!(!clamp_ipv4_tcp_mss(&mut p, 1300));
+    }
+}
