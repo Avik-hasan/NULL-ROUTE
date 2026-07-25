@@ -24,14 +24,25 @@
 
 #![cfg(windows)]
 
-use vpn_shared::{Result, VpnError};
-use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
-use windows::Win32::Security::{
-    CreateWellKnownSid, GetTokenInformation, TokenUser, WinLocalSystemSid, ACL,
-    SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER, PSID,
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use vpn_shared::{Result, VpnError, PIPE_NAME};
+use windows::core::PWSTR;
+use windows::Win32::Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE, HLOCAL};
+use windows::Win32::Security::Authorization::{
+    SetEntriesInAclW, EXPLICIT_ACCESS_W, SET_ACCESS, TRUSTEE_IS_SID, TRUSTEE_IS_USER,
+    TRUSTEE_IS_WELL_KNOWN_GROUP, TRUSTEE_W,
 };
+use windows::Win32::Security::{
+    CreateWellKnownSid, GetTokenInformation, InitializeSecurityDescriptor,
+    SetSecurityDescriptorDacl, TokenUser, WinLocalSystemSid, ACL, NO_INHERITANCE,
+    PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER, PSID,
+};
+use windows::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
 use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+const GENERIC_READ: u32 = 0x80000000;
+const GENERIC_WRITE: u32 = 0x40000000;
 
 /// Owns the heap allocations backing a `SECURITY_ATTRIBUTES` so they outlive the
 /// pipe-creation call and are freed exactly once on drop.
@@ -142,4 +153,82 @@ pub fn build_system_sid() -> Result<Vec<u8>> {
         .map_err(|e| VpnError::SecurityDescriptor(format!("CreateWellKnownSid: {e}")))?;
         Ok(buf)
     }
+}
+
+/// Construct a `SECURITY_ATTRIBUTES` whose DACL grants access to SYSTEM + the
+/// interactive user only.
+pub fn build_pipe_security() -> Result<Box<PipeSecurity>> {
+    let mut system_sid = build_system_sid()?;
+    let mut user_sid = resolve_interactive_user_sid()?;
+
+    let mut ea: [EXPLICIT_ACCESS_W; 2] = unsafe { core::mem::zeroed() };
+
+    ea[0].grfAccessPermissions = GENERIC_READ | GENERIC_WRITE;
+    ea[0].grfAccessMode = SET_ACCESS;
+    ea[0].grfInheritance = NO_INHERITANCE;
+    ea[0].Trustee = TRUSTEE_W {
+        TrusteeForm: TRUSTEE_IS_SID,
+        TrusteeType: TRUSTEE_IS_WELL_KNOWN_GROUP,
+        ptstrName: PWSTR(system_sid.as_mut_ptr() as *mut u16),
+        ..unsafe { core::mem::zeroed() }
+    };
+
+    ea[1].grfAccessPermissions = GENERIC_READ | GENERIC_WRITE;
+    ea[1].grfAccessMode = SET_ACCESS;
+    ea[1].grfInheritance = NO_INHERITANCE;
+    ea[1].Trustee = TRUSTEE_W {
+        TrusteeForm: TRUSTEE_IS_SID,
+        TrusteeType: TRUSTEE_IS_USER,
+        ptstrName: PWSTR(user_sid.as_mut_ptr() as *mut u16),
+        ..unsafe { core::mem::zeroed() }
+    };
+
+    let mut acl: *mut ACL = std::ptr::null_mut();
+    let rc = unsafe { SetEntriesInAclW(Some(&ea[..]), None, &mut acl) };
+    if rc.0 != ERROR_SUCCESS.0 || acl.is_null() {
+        return Err(VpnError::SecurityDescriptor(format!(
+            "SetEntriesInAclW failed: {:#x}",
+            rc.0
+        )));
+    }
+
+    let mut descriptor = Box::new(SECURITY_DESCRIPTOR::default());
+    let psd = PSECURITY_DESCRIPTOR(descriptor.as_mut() as *mut _ as *mut _);
+    unsafe {
+        InitializeSecurityDescriptor(psd, SECURITY_DESCRIPTOR_REVISION).map_err(|e| {
+            VpnError::SecurityDescriptor(format!("InitializeSecurityDescriptor: {e}"))
+        })?;
+        SetSecurityDescriptorDacl(psd, true, Some(acl), false)
+            .map_err(|e| VpnError::SecurityDescriptor(format!("SetSecurityDescriptorDacl: {e}")))?;
+    }
+
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: core::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor.as_mut() as *mut _ as *mut core::ffi::c_void,
+        bInheritHandle: false.into(),
+    };
+
+    Ok(Box::new(PipeSecurity {
+        _descriptor: descriptor,
+        acl,
+        _system_sid: system_sid,
+        _user_sid_buf: user_sid,
+        attributes,
+    }))
+}
+
+/// Create a pipe-server instance with our restrictive ACL applied.
+pub fn create_secured_server(sec: &PipeSecurity, first: bool) -> Result<NamedPipeServer> {
+    let mut opts = ServerOptions::new();
+    opts.first_pipe_instance(first);
+    opts.reject_remote_clients(true);
+
+    let server = unsafe {
+        opts.create_with_security_attributes_raw(
+            PIPE_NAME,
+            sec.attributes_ptr() as *mut core::ffi::c_void,
+        )
+    }
+    .map_err(|e| VpnError::Ipc(format!("create pipe: {e}")))?;
+    Ok(server)
 }
