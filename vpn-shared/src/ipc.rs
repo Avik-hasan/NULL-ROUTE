@@ -26,3 +26,15 @@ pub enum IpcCommand {
     /// Terminate the elevated background service.
     Terminate,
 }
+
+/// Responses & async events sent from the service back to the GUI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "resp", rename_all = "snake_case")]
+pub enum IpcResponse {
+    Hello { protocol_version: u32, service_version: String },
+    Ack,
+    Error { message: String },
+    Status(crate::telemetry::Telemetry),
+    /// Streamed diagnostics-console line.
+    LogLine(crate::telemetry::LogEvent),
+}
