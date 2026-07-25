@@ -1,0 +1,10 @@
+[package]
+name = "keygen"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+vpn-core = { path = "../../vpn-core" }
+vpn-shared = { path = "../../vpn-shared" }
+rand = { workspace = true }
