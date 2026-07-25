@@ -188,3 +188,49 @@ impl AntiReplayWindow {
         self.inner.lock().highest
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_monotonic_sequence() {
+        let w = AntiReplayWindow::new();
+        for c in 1..=1000 {
+            assert!(w.validate(c).is_ok(), "counter {c} should be fresh");
+        }
+    }
+
+    #[test]
+    fn rejects_exact_duplicate() {
+        let w = AntiReplayWindow::new();
+        assert!(w.validate(10).is_ok());
+        assert!(w.validate(11).is_ok());
+        assert!(matches!(w.validate(10), Err(VpnError::Replay { .. })));
+    }
+
+    #[test]
+    fn accepts_in_order_within_window() {
+        let w = AntiReplayWindow::new();
+        assert!(w.validate(100).is_ok());
+        assert!(w.validate(80).is_ok());
+        assert!(w.validate(90).is_ok());
+        assert!(matches!(w.validate(90), Err(VpnError::Replay { .. })));
+    }
+
+    #[test]
+    fn rejects_too_old() {
+        let w = AntiReplayWindow::new();
+        assert!(w.validate(200).is_ok());
+        assert!(matches!(w.validate(135), Err(VpnError::Replay { .. })));
+        assert!(w.validate(137).is_ok());
+    }
+
+    #[test]
+    fn large_jump_resets_bitmap() {
+        let w = AntiReplayWindow::new();
+        assert!(w.validate(5).is_ok());
+        assert!(w.validate(5_000).is_ok());
+        assert!(matches!(w.validate(6), Err(VpnError::Replay { .. })));
+    }
+}
