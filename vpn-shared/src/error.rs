@@ -52,3 +52,15 @@ pub enum VpnError {
     #[error("invalid state: {0}")]
     InvalidState(String),
 }
+
+impl From<std::io::Error> for VpnError {
+    fn from(e: std::io::Error) -> Self {
+        VpnError::Io(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for VpnError {
+    fn from(e: serde_json::Error) -> Self {
+        VpnError::Serde(e.to_string())
+    }
+}
