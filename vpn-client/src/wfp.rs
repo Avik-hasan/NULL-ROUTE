@@ -255,36 +255,112 @@ fn display(name: &'static str, desc: &'static str) -> FWPM_DISPLAY_DATA0 {
     }
 }
 
+fn base_filter(layer: GUID, name: &'static str, weight: u8) -> FWPM_FILTER0 {
+    let mut f = FWPM_FILTER0::default();
+    f.layerKey = layer;
+    f.subLayerKey = SUBLAYER_GUID;
+    f.displayData = display(name, name);
+    f.weight = FWP_VALUE0 {
+        r#type: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_UINT8,
+        Anonymous: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_VALUE0_0 {
+            uint8: weight,
+        },
+    };
+    f
+}
+
+fn attach_conditions(f: &mut FWPM_FILTER0, conds: &[FWPM_FILTER_CONDITION0]) {
+    if conds.is_empty() {
+        return;
+    }
+    let boxed = conds.to_vec().into_boxed_slice();
+    f.numFilterConditions = boxed.len() as u32;
+    f.filterCondition = Box::leak(boxed).as_mut_ptr();
+}
+
 fn block_filter(
-    _layer: GUID,
-    _name: &'static str,
-    _conds: &[FWPM_FILTER_CONDITION0],
-    _weight: u8,
+    layer: GUID,
+    name: &'static str,
+    conds: &[FWPM_FILTER_CONDITION0],
+    weight: u8,
 ) -> FWPM_FILTER0 {
-    FWPM_FILTER0::default()
+    let mut f = base_filter(layer, name, weight);
+    f.action = FWPM_ACTION0 {
+        r#type: FWP_ACTION_BLOCK,
+        ..Default::default()
+    };
+    attach_conditions(&mut f, conds);
+    f
 }
 
 fn permit_filter(
-    _layer: GUID,
-    _name: &'static str,
-    _conds: &[FWPM_FILTER_CONDITION0],
-    _weight: u8,
+    layer: GUID,
+    name: &'static str,
+    conds: &[FWPM_FILTER_CONDITION0],
+    weight: u8,
 ) -> FWPM_FILTER0 {
-    FWPM_FILTER0::default()
+    let mut f = base_filter(layer, name, weight);
+    f.action = FWPM_ACTION0 {
+        r#type: FWP_ACTION_PERMIT,
+        ..Default::default()
+    };
+    attach_conditions(&mut f, conds);
+    f
 }
 
-fn cond_u8_protocol(_proto: u8) -> FWPM_FILTER_CONDITION0 {
-    FWPM_FILTER_CONDITION0::default()
+fn cond_u8_protocol(proto: u8) -> FWPM_FILTER_CONDITION0 {
+    let mut c = FWPM_FILTER_CONDITION0::default();
+    c.fieldKey = FWPM_CONDITION_IP_PROTOCOL;
+    c.matchType = FWP_MATCH_EQUAL;
+    c.conditionValue = FWP_CONDITION_VALUE0 {
+        r#type: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_UINT8,
+        Anonymous: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_CONDITION_VALUE0_0 {
+            uint8: proto,
+        },
+    };
+    c
 }
 
-fn cond_u16_remote_port(_port: u16) -> FWPM_FILTER_CONDITION0 {
-    FWPM_FILTER_CONDITION0::default()
+fn cond_u16_remote_port(port: u16) -> FWPM_FILTER_CONDITION0 {
+    let mut c = FWPM_FILTER_CONDITION0::default();
+    c.fieldKey = FWPM_CONDITION_IP_REMOTE_PORT;
+    c.matchType = FWP_MATCH_EQUAL;
+    c.conditionValue = FWP_CONDITION_VALUE0 {
+        r#type: FWP_UINT16,
+        Anonymous: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_CONDITION_VALUE0_0 {
+            uint16: port,
+        },
+    };
+    c
 }
 
-fn cond_u32_remote_addr(_ip: Ipv4Addr) -> FWPM_FILTER_CONDITION0 {
-    FWPM_FILTER_CONDITION0::default()
+fn cond_u32_remote_addr(ip: Ipv4Addr) -> FWPM_FILTER_CONDITION0 {
+    let mut c = FWPM_FILTER_CONDITION0::default();
+    c.fieldKey = FWPM_CONDITION_IP_REMOTE_ADDRESS;
+    c.matchType = FWP_MATCH_EQUAL;
+    let mask = Box::new(windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_V4_ADDR_AND_MASK {
+        addr: u32::from(ip).to_be(),
+        mask: 0xFFFFFFFF,
+    });
+    c.conditionValue = FWP_CONDITION_VALUE0 {
+        r#type: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_V4_ADDR_MASK,
+        Anonymous: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_CONDITION_VALUE0_0 {
+            v4AddrMask: Box::leak(mask) as *mut _,
+        },
+    };
+    c
 }
 
-fn cond_u64_local_iface(_luid: u64) -> FWPM_FILTER_CONDITION0 {
-    FWPM_FILTER_CONDITION0::default()
+fn cond_u64_local_iface(luid: u64) -> FWPM_FILTER_CONDITION0 {
+    let boxed = Box::leak(Box::new(luid));
+    let mut c = FWPM_FILTER_CONDITION0::default();
+    c.fieldKey = FWPM_CONDITION_IP_LOCAL_INTERFACE;
+    c.matchType = FWP_MATCH_EQUAL;
+    c.conditionValue = FWP_CONDITION_VALUE0 {
+        r#type: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_UINT64,
+        Anonymous: windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_CONDITION_VALUE0_0 {
+            uint64: boxed as *mut u64,
+        },
+    };
+    c
 }
