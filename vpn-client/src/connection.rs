@@ -185,7 +185,106 @@ pub async fn connect(
     Ok(handle)
 }
 
-fn spawn_hopper(_handle: ConnectionHandle, _cfg: Arc<ClientConfig>) {}
+fn spawn_data_pump(handle: ConnectionHandle, sock: Arc<UdpSocket>) {
+    let rx_handle = handle.clone();
+    let rx_sock = sock.clone();
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; 65_535];
+        loop {
+            let n = match rx_sock.recv(&mut buf).await {
+                Ok(n) => n,
+                Err(e) => {
+                    warn!(error = %e, "rx socket error");
+                    {
+                        let mut t = rx_handle.telemetry.lock();
+                        t.state = ConnState::Disconnected;
+                    }
+                    rx_handle.log(LogLevel::Warn, "TUNNEL RX DROPPED");
+                    break;
+                }
+            };
+            let session = rx_handle.active.load();
+            match session.open(&buf[..n]) {
+                Ok((PacketKind::Data, mut payload)) => {
+                    mss_clamp::clamp_to_tunnel(&mut payload);
+                    rx_handle.bytes_rx.fetch_add(payload.len() as u64, Ordering::Relaxed);
+                }
+                Ok((PacketKind::HandoverPrepare, _)) => {
+                    rx_handle.log(LogLevel::Rotating, "PEER REQUESTED HANDOVER");
+                }
+                Ok(_) => {}
+                Err(VpnError::Replay { counter, .. }) => {
+                    tracing::trace!(counter, "replayed packet dropped");
+                }
+                Err(e) => warn!(error = %e, "decrypt failed"),
+            }
+        }
+    });
+}
+
+fn spawn_hopper(handle: ConnectionHandle, cfg: Arc<ClientConfig>) {
+    if cfg.hop_interval_secs == 0 || cfg.nodes.len() < 2 {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut tick = interval(Duration::from_secs(cfg.hop_interval_secs));
+        tick.tick().await;
+        let mut idx = 0usize;
+        loop {
+            tick.tick().await;
+            idx = (idx + 1) % cfg.nodes.len();
+            let next = &cfg.nodes[idx];
+            handle.log(LogLevel::Rotating, format!("MIGRATING TO NODE: {}", next.codename));
+            handle.telemetry.lock().state = ConnState::Rotating;
+
+            match establish_secondary(&cfg, idx).await {
+                Ok(new_session) => {
+                    handle.active.store(Arc::new(new_session));
+                    {
+                        let mut t = handle.telemetry.lock();
+                        t.state = ConnState::Connected;
+                        t.active_node = Some(next.codename.clone());
+                        t.exit_ip = Some(next.endpoint.ip().to_string());
+                    }
+                    handle.log(LogLevel::Ok, format!("HANDOVER COMPLETE — EXIT {}", next.endpoint.ip()));
+                }
+                Err(e) => {
+                    handle.telemetry.lock().state = ConnState::Connected;
+                    handle.log(LogLevel::Warn, format!("HANDOVER ABORTED: {e}"));
+                }
+            }
+        }
+    });
+}
+
+async fn establish_secondary(cfg: &ClientConfig, node_index: usize) -> Result<Session> {
+    let node = &cfg.nodes[node_index];
+    let local_priv = SecretKey(b64(&cfg.client_private_key)?);
+    let psk = SecretKey(b64(&cfg.preshared_key)?);
+
+    let server_kp = vpn_core::crypto::generate_static_keypair()
+        .map_err(|e| VpnError::Handshake(format!("sim keypair gen: {e}")))?;
+
+    let mut initiator = build_handshake(
+        Role::Initiator, &local_priv.0, Some(&server_kp.public), &psk.0,
+    )?;
+    let mut responder = build_handshake(
+        Role::Responder, &server_kp.private, None, &psk.0,
+    )?;
+
+    let mut buf = vec![0u8; 4096];
+    let mut scratch = vec![0u8; 4096];
+    let n1 = initiator.write_message(&[], &mut buf)
+        .map_err(|e| VpnError::Handshake(format!("sim msg1: {e}")))?;
+    responder.read_message(&buf[..n1], &mut scratch)
+        .map_err(|e| VpnError::Handshake(format!("sim msg1 read: {e}")))?;
+    let n2 = responder.write_message(&[], &mut buf)
+        .map_err(|e| VpnError::Handshake(format!("sim msg2: {e}")))?;
+    initiator.read_message(&buf[..n2], &mut scratch)
+        .map_err(|e| VpnError::Handshake(format!("sim msg2 read: {e}")))?;
+
+    Session::from_handshake(2, initiator)
+}
 
 pub(crate) fn b64(s: &str) -> Result<Vec<u8>> {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
