@@ -9,5 +9,6 @@
 pub mod config;
 pub mod error;
 pub mod ipc;
+pub mod telemetry;
 
 pub use error::{Result, VpnError};
