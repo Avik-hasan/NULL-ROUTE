@@ -16,6 +16,8 @@ mod dns;
 mod ipc;
 mod recovery;
 #[cfg(windows)]
+mod routing;
+#[cfg(windows)]
 mod wfp;
 
 fn main() {}
