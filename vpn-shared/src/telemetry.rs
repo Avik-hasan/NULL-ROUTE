@@ -44,3 +44,31 @@ impl Default for Telemetry {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum LogLevel {
+    Ok,
+    Info,
+    Warn,
+    Rotating,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEvent {
+    /// Milliseconds since UNIX epoch (formatted client-side).
+    pub ts_ms: u64,
+    pub level: LogLevel,
+    pub message: String,
+}
+
+impl LogEvent {
+    pub fn now(level: LogLevel, message: impl Into<String>) -> Self {
+        let ts_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        Self { ts_ms, level, message: message.into() }
+    }
+}
