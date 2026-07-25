@@ -13,5 +13,7 @@
 #[cfg(windows)]
 mod ipc;
 mod recovery;
+#[cfg(windows)]
+mod wfp;
 
 fn main() {}
