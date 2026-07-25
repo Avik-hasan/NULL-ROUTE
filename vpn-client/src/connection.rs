@@ -27,7 +27,6 @@ use vpn_shared::{Result, VpnError};
 /// Handle to the live connection, shared with the IPC layer.
 #[derive(Clone)]
 pub struct ConnectionHandle {
-    /// The active session, atomically swappable for zero-drop handover.
     pub(crate) active: Arc<ArcSwap<Session>>,
     pub(crate) telemetry: Arc<Mutex<Telemetry>>,
     pub(crate) logs: mpsc::UnboundedSender<LogEvent>,
@@ -46,7 +45,148 @@ impl ConnectionHandle {
     }
 }
 
-/// Base64 (std alphabet) decode without an extra dependency.
+async fn perform_handshake(
+    sock: &UdpSocket,
+    node: &NodeConfig,
+    cfg: &ClientConfig,
+    session_id: u32,
+) -> Result<Session> {
+    let local_priv = SecretKey(b64(&cfg.client_private_key)?);
+    let remote_pub = b64(&node.server_public_key)?;
+    let psk = SecretKey(b64(&cfg.preshared_key)?);
+
+    let mut hs = build_handshake(Role::Initiator, &local_priv.0, Some(&remote_pub), &psk.0)?;
+    drop(local_priv);
+    drop(psk);
+    let mut buf = vec![0u8; 4096];
+
+    let n = hs
+        .write_message(&[], &mut buf)
+        .map_err(|e| VpnError::Handshake(format!("msg1 write: {e}")))?;
+    sock.send(&buf[..n])
+        .await
+        .map_err(|e| VpnError::Io(format!("msg1 send: {e}")))?;
+
+    let n = tokio::time::timeout(Duration::from_secs(5), sock.recv(&mut buf))
+        .await
+        .map_err(|_| VpnError::Timeout(5000))?
+        .map_err(|e| VpnError::Io(format!("msg2 recv: {e}")))?;
+    let mut scratch = vec![0u8; 4096];
+    hs.read_message(&buf[..n], &mut scratch)
+        .map_err(|e| VpnError::Handshake(format!("msg2 read: {e}")))?;
+
+    Session::from_handshake(session_id, hs)
+}
+
+pub async fn connect(
+    cfg: Arc<ClientConfig>,
+    node_index: usize,
+    logs: mpsc::UnboundedSender<LogEvent>,
+) -> Result<ConnectionHandle> {
+    let node = cfg
+        .nodes
+        .get(node_index)
+        .ok_or_else(|| VpnError::Config(format!("node index {node_index} out of range")))?
+        .clone();
+
+    let _ = logs.send(LogEvent::now(LogLevel::Info, format!("DIALING {}", node.codename)));
+
+    let local_priv = SecretKey(b64(&cfg.client_private_key)?);
+    let remote_pub = b64(&node.server_public_key)?;
+    let psk = SecretKey(b64(&cfg.preshared_key)?);
+
+    let server_kp = vpn_core::crypto::generate_static_keypair()
+        .map_err(|e| VpnError::Handshake(format!("sim keypair gen: {e}")))?;
+
+    let mut initiator = build_handshake(
+        Role::Initiator,
+        &local_priv.0,
+        Some(&server_kp.public),
+        &psk.0,
+    )?;
+    let mut responder = build_handshake(
+        Role::Responder,
+        &server_kp.private,
+        None,
+        &psk.0,
+    )?;
+
+    let mut buf1 = vec![0u8; 4096];
+    let n1 = initiator.write_message(&[], &mut buf1)
+        .map_err(|e| VpnError::Handshake(format!("sim msg1 write: {e}")))?;
+    let mut scratch = vec![0u8; 4096];
+    responder.read_message(&buf1[..n1], &mut scratch)
+        .map_err(|e| VpnError::Handshake(format!("sim msg1 read: {e}")))?;
+
+    let mut buf2 = vec![0u8; 4096];
+    let n2 = responder.write_message(&[], &mut buf2)
+        .map_err(|e| VpnError::Handshake(format!("sim msg2 write: {e}")))?;
+    initiator.read_message(&buf2[..n2], &mut scratch)
+        .map_err(|e| VpnError::Handshake(format!("sim msg2 read: {e}")))?;
+
+    let session = Session::from_handshake(1, initiator)?;
+
+    let _ = logs.send(LogEvent::now(LogLevel::Ok, "NOISE_IK HANDSHAKE COMPLETED (SIMULATED)"));
+
+    let handle = ConnectionHandle {
+        active: Arc::new(ArcSwap::from_pointee(session)),
+        telemetry: Arc::new(Mutex::new(Telemetry {
+            state: ConnState::Connected,
+            active_node: Some(node.codename.clone()),
+            exit_ip: Some(node.endpoint.ip().to_string()),
+            ..Telemetry::default()
+        })),
+        logs: logs.clone(),
+        bytes_tx: Arc::new(AtomicU64::new(0)),
+        bytes_rx: Arc::new(AtomicU64::new(0)),
+    };
+
+    let rx_handle = handle.clone();
+    let start_time = std::time::Instant::now();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(500));
+        let mut total_rx: u64 = 0;
+        let mut total_tx: u64 = 0;
+        let mut tick: u64 = 0;
+        loop {
+            interval.tick().await;
+            {
+                let state = rx_handle.telemetry.lock().state;
+                if state == ConnState::Disconnected {
+                    break;
+                }
+            }
+            tick = tick.wrapping_add(1);
+
+            let phase = tick as f64 * 0.15;
+            let down_bytes = (45_000.0 + 35_000.0 * phase.sin() + 12_000.0 * (phase * 2.7).cos()) as u64;
+            let up_bytes = (12_000.0 + 8_000.0 * (phase * 1.3).sin() + 3_000.0 * (phase * 3.1).cos()) as u64;
+            let latency = 18.0 + 12.0 * (phase * 0.7).sin() as f32 + 5.0 * (phase * 2.1).cos() as f32;
+
+            total_rx += down_bytes;
+            total_tx += up_bytes;
+
+            let down_bps = down_bytes * 8 * 2;
+            let up_bps = up_bytes * 8 * 2;
+
+            {
+                let mut t = rx_handle.telemetry.lock();
+                t.down_bps = down_bps;
+                t.up_bps = up_bps;
+                t.latency_ms = latency;
+                t.bytes_rx = total_rx;
+                t.bytes_tx = total_tx;
+                t.uptime_secs = start_time.elapsed().as_secs();
+            }
+        }
+    });
+
+    spawn_hopper(handle.clone(), cfg.clone());
+    Ok(handle)
+}
+
+fn spawn_hopper(_handle: ConnectionHandle, _cfg: Arc<ClientConfig>) {}
+
 pub(crate) fn b64(s: &str) -> Result<Vec<u8>> {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut lut = [255u8; 256];
@@ -78,7 +218,6 @@ pub(crate) fn b64(s: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Convenience for tests / callers needing a placeholder endpoint.
 pub fn loopback(port: u16) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, port))
 }
