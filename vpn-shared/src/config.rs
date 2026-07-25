@@ -35,6 +35,17 @@ pub struct ClientConfig {
     pub kill_switch: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub listen: SocketAddr,
+    pub server_private_key: String,
+    pub preshared_key: String,
+    /// TUN subnet handed out to peers, e.g. "10.66.0.0/24".
+    pub tunnel_subnet: String,
+    /// Outbound interfaces this node may rotate between for server-side hopping.
+    pub exit_interfaces: Vec<String>,
+}
+
 fn default_hop_interval() -> u64 {
     300
 }
