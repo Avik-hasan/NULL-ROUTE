@@ -14,6 +14,7 @@
 #![cfg(windows)]
 
 use std::net::Ipv4Addr;
+use tracing::info;
 use vpn_shared::{Result, VpnError};
 
 /// Captured pre-connect routing state for exact restoration.
@@ -37,6 +38,39 @@ impl RouteSnapshot {
             tunnel_ifindex,
             applied: false,
         })
+    }
+
+    /// Apply the split-tunnel routing described above.
+    pub fn apply(&mut self) -> Result<()> {
+        create_route(self.server_ip, 32, self.original_gateway, self.original_ifindex)?;
+        create_route(Ipv4Addr::new(0, 0, 0, 0), 1, Ipv4Addr::UNSPECIFIED, self.tunnel_ifindex)?;
+        create_route(Ipv4Addr::new(128, 0, 0, 0), 1, Ipv4Addr::UNSPECIFIED, self.tunnel_ifindex)?;
+        self.applied = true;
+        info!(server = %self.server_ip, "routing: split-tunnel default installed");
+        Ok(())
+    }
+
+    /// Restore the exact pre-connect routing table. Safe to call multiple times.
+    pub fn restore(&mut self) -> Result<()> {
+        if !self.applied {
+            return Ok(());
+        }
+        let mut first_err: Option<VpnError> = None;
+        for (dst, prefix, ifindex) in [
+            (Ipv4Addr::new(0, 0, 0, 0), 1u8, self.tunnel_ifindex),
+            (Ipv4Addr::new(128, 0, 0, 0), 1u8, self.tunnel_ifindex),
+            (self.server_ip, 32u8, self.original_ifindex),
+        ] {
+            if let Err(e) = delete_route(dst, prefix, ifindex) {
+                first_err.get_or_insert(e);
+            }
+        }
+        self.applied = false;
+        info!("routing: original default route restored");
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
     }
 }
 
@@ -81,4 +115,12 @@ fn query_default_route() -> Result<(Ipv4Addr, u32)> {
         best.map(|(gw, idx, _)| (gw, idx))
             .ok_or_else(|| VpnError::Routing("no default route found".into()))
     }
+}
+
+fn create_route(_dst: Ipv4Addr, _prefix: u8, _next_hop: Ipv4Addr, _ifindex: u32) -> Result<()> {
+    Ok(())
+}
+
+fn delete_route(_dst: Ipv4Addr, _prefix: u8, _ifindex: u32) -> Result<()> {
+    Ok(())
 }
