@@ -1,0 +1,29 @@
+[package]
+name = "vpn-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[dependencies]
+vpn-shared = { path = "../vpn-shared" }
+
+snow = { workspace = true }
+chacha20poly1305 = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+zeroize = { workspace = true }
+subtle = { workspace = true }
+x25519-dalek = { workspace = true }
+
+bytes = { workspace = true }
+etherparse = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
