@@ -106,4 +106,69 @@ impl Session {
     pub fn tx_high_water(&self) -> u64 {
         self.tx_counter.load(Ordering::SeqCst)
     }
+
+    /// Encrypt an application payload into a full wire frame (`header || ciphertext`).
+    pub fn seal(&self, kind: PacketKind, plaintext: &[u8]) -> Result<Vec<u8>> {
+        let counter = self.tx_counter.fetch_add(1, Ordering::SeqCst);
+        if counter == u64::MAX {
+            return Err(VpnError::Crypto("nonce space exhausted; rekey required".into()));
+        }
+
+        let header = Header { kind, session_id: self.session_id, counter };
+
+        let mut ciphertext = vec![0u8; plaintext.len() + 16];
+        let n = self
+            .transport
+            .write_message(counter, plaintext, &mut ciphertext)
+            .map_err(|e| VpnError::Crypto(format!("seal failed: {e}")))?;
+        ciphertext.truncate(n);
+
+        let mut frame = Vec::with_capacity(HEADER_LEN + n);
+        header.encode(&mut frame);
+        frame.extend_from_slice(&ciphertext);
+        Ok(frame)
+    }
+
+    /// Validate + decrypt an inbound wire frame. Returns `(kind, plaintext)`.
+    pub fn open(&self, frame: &[u8]) -> Result<(PacketKind, Vec<u8>)> {
+        let header = Header::decode(frame)?;
+        if header.session_id != self.session_id {
+            return Err(VpnError::MalformedPacket(format!(
+                "session mismatch: {} != {}",
+                header.session_id, self.session_id
+            )));
+        }
+
+        self.replay.check(header.counter)?;
+
+        let ct = &frame[HEADER_LEN..];
+        if ct.len() < 16 {
+            return Err(VpnError::MalformedPacket("ciphertext shorter than AEAD tag".into()));
+        }
+        let mut plaintext = vec![0u8; ct.len() - 16];
+        let n = self
+            .transport
+            .read_message(header.counter, ct, &mut plaintext)
+            .map_err(|e| VpnError::Crypto(format!("open failed: {e}")))?;
+        plaintext.truncate(n);
+
+        self.replay.commit(header.counter)?;
+        Ok((header.kind, plaintext))
+    }
+}
+
+/// A zeroize-on-drop wrapper for raw key material held in memory.
+#[derive(Clone)]
+pub struct SecretKey(pub Vec<u8>);
+
+impl Drop for SecretKey {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl core::fmt::Debug for SecretKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("SecretKey(**redacted**)")
+    }
 }
