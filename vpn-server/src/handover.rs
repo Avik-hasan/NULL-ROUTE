@@ -103,3 +103,22 @@ pub fn spawn_rotation(engine: Arc<HandoverEngine>, every: Duration) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_handover_engine_rotation() {
+        let interfaces = vec!["eth0".to_string(), "eth1".to_string()];
+        let engine = HandoverEngine::new(interfaces);
+        
+        assert_eq!(engine.current_interface(), "eth0");
+        
+        engine.rotate();
+        assert_eq!(engine.current_interface(), "eth1");
+        
+        engine.rotate();
+        assert_eq!(engine.current_interface(), "eth0");
+    }
+}
