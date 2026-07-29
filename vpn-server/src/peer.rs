@@ -138,3 +138,41 @@ impl PeerTable {
         by_remote.insert(new_remote, peer.clone());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vpn_core::crypto::{generate_static_keypair, build_handshake, Role};
+
+    fn create_dummy_session() -> Session {
+        let initiator_kp = generate_static_keypair().unwrap();
+        let responder_kp = generate_static_keypair().unwrap();
+        let psk = [0u8; 32];
+        let initiator = build_handshake(Role::Initiator, &initiator_kp.private, Some(&responder_kp.public), &psk).unwrap();
+        Session::from_handshake(1, initiator).unwrap()
+    }
+
+    #[test]
+    fn test_peer_allocation_and_reaping() {
+        let table = PeerTable::new("10.66.0.0/24").unwrap();
+        
+        let remote: SocketAddr = "192.168.1.100:51820".parse().unwrap();
+        let session = create_dummy_session();
+        
+        // Allocate new peer
+        let peer = table.allocate(remote, session).unwrap();
+        assert!(peer.tunnel_ip.octets()[0] == 10);
+        assert!(peer.tunnel_ip.octets()[1] == 66);
+        
+        // Lookup by remote
+        let found = table.by_remote(&remote).unwrap();
+        assert_eq!(found.tunnel_ip, peer.tunnel_ip);
+        
+        // Lookup by tunnel IP
+        let found2 = table.by_tunnel_ip(&peer.tunnel_ip).unwrap();
+        assert_eq!(found2.tunnel_ip, peer.tunnel_ip);
+
+        // Reap should not remove it yet since it was just allocated
+        assert_eq!(table.reap(std::time::Duration::from_secs(60)), 0);
+    }
+}
