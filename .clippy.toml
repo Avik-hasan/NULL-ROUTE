@@ -1,0 +1,4 @@
+# Exclude generated code and external wrappers from certain lint checks
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 8
+type-complexity-threshold = 300
