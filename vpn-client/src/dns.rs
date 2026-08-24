@@ -128,3 +128,18 @@ fn run_netsh(args: &[&str]) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dns_snapshot_default_state() {
+        // Create an unapplied snapshot. We can't actually query netsh in a unit test reliably,
+        // so we just verify the struct initializes properly before mutational methods are called.
+        let snap = DnsSnapshot::new(12);
+        assert_eq!(snap.tunnel_ifindex, 12);
+        assert!(snap.original_servers.is_empty());
+        assert!(!snap.applied);
+    }
+}
