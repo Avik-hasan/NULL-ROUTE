@@ -177,3 +177,24 @@ fn set_sockaddr_v4(
         },
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn test_set_sockaddr_v4_mapping() {
+        let ip = Ipv4Addr::new(192, 168, 1, 100);
+        let mut sa = SOCKADDR_INET::default();
+        set_sockaddr_v4(&mut sa, ip);
+
+        unsafe {
+            assert_eq!(sa.Ipv4.sin_family, windows::Win32::Networking::WinSock::AF_INET);
+            assert_eq!(sa.Ipv4.sin_addr.S_un.S_un_b.s_b1, 192);
+            assert_eq!(sa.Ipv4.sin_addr.S_un.S_un_b.s_b2, 168);
+            assert_eq!(sa.Ipv4.sin_addr.S_un.S_un_b.s_b3, 1);
+            assert_eq!(sa.Ipv4.sin_addr.S_un.S_un_b.s_b4, 100);
+        }
+    }
+}
