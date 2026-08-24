@@ -1,0 +1,6 @@
+edition = "2021"
+max_width = 100
+format_strings = true
+reorder_imports = true
+reorder_modules = true
+group_imports = "StdExternalCrate"
