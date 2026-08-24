@@ -364,3 +364,27 @@ fn cond_u64_local_iface(luid: u64) -> FWPM_FILTER_CONDITION0 {
     };
     c
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wfp_cond_u8_protocol() {
+        let cond = cond_u8_protocol(17); // UDP
+        assert_eq!(cond.matchType, windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_MATCH_EQUAL);
+        assert_eq!(cond.conditionValue.r#type, windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_UINT8);
+        unsafe {
+            assert_eq!(cond.conditionValue.Anonymous.uint8, 17);
+        }
+    }
+
+    #[test]
+    fn test_wfp_cond_u16_remote_port() {
+        let cond = cond_u16_remote_port(3478);
+        assert_eq!(cond.matchType, windows::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_MATCH_EQUAL);
+        unsafe {
+            assert_eq!(cond.conditionValue.Anonymous.uint16, 3478);
+        }
+    }
+}
