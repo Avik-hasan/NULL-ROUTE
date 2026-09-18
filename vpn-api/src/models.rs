@@ -32,3 +32,18 @@ pub struct AuthResponse {
 pub struct NodeListResponse {
     pub nodes: Vec<VpnNode>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_auth_request_serialization() {
+        let req = AuthRequest { token: "secret_123".into() };
+        let json = serde_json::to_string(&req).unwrap();
+        assert_eq!(json, r#"{"token":"secret_123"}"#);
+        
+        let deserialized: AuthRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.token, req.token);
+    }
+}
