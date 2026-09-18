@@ -12,6 +12,8 @@ members = [
     "vpn-core",
     "vpn-client",
     "vpn-server",
+    "vpn-cli",
+    "vpn-api",
     "gui/src-tauri",
 ]
 
@@ -23,6 +25,8 @@ default-members = [
     "vpn-core",
     "vpn-client",
     "vpn-server",
+    "vpn-cli",
+    "vpn-api",
 ]
 
 [workspace.package]
@@ -67,6 +71,11 @@ parking_lot = "0.12"
 once_cell = "1.19"
 ipnet = "2.9"
 etherparse = "0.15"
+
+# --- cli & api ---
+clap = { version = "4.5", features = ["derive"] }
+axum = "0.7"
+reqwest = { version = "0.12", features = ["json"] }
 
 # --- Windows platform (client only) ---
 # The `windows` crate exposes WFP (Windows Filtering Platform), Named Pipe
