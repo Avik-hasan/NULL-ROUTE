@@ -12,27 +12,8 @@ pub async fn authenticate(
 ) -> Json<AuthResponse> {
     let users = state.users.read().await;
     
-    if let Some(user) = users.get(&payload.token) {
-        if user.subscription_active {
-            Json(AuthResponse {
-                success: true,
-                user: Some(user.clone()),
-                error_message: None,
-            })
-        } else {
-            Json(AuthResponse {
-                success: false,
-                user: Some(user.clone()),
-                error_message: Some("Subscription expired".into()),
-            })
-        }
-    } else {
-        Json(AuthResponse {
-            success: false,
-            user: None,
-            error_message: Some("Invalid token".into()),
-        })
-    }
+    let response = crate::auth::process_auth(&users, &payload.token);
+    Json(response)
 }
 
 pub async fn get_nodes(

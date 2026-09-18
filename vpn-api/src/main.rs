@@ -1,6 +1,7 @@
 mod models;
 mod routes;
 mod state;
+mod auth;
 
 use axum::{
     routing::{get, post},
