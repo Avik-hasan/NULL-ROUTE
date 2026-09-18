@@ -32,7 +32,7 @@ impl IpcClient {
                         
                         return Ok(Self { pipe });
                     }
-                    Err(e) if retries > 0 => {
+                    Err(_e) if retries > 0 => {
                         retries -= 1;
                         std::thread::sleep(Duration::from_millis(100));
                     }

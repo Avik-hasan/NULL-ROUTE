@@ -5,7 +5,7 @@ mod display;
 use clap::Parser;
 use args::{Cli, Commands};
 use client::IpcClient;
-use vpn_shared::ipc::{IpcCommand, IpcResponse};
+use vpn_shared::ipc::IpcCommand;
 
 fn main() {
     let cli = Cli::parse();
@@ -20,7 +20,7 @@ fn main() {
 
     match cli.command {
         Commands::Connect { node } => {
-            if let Err(e) = ipc.send_command(IpcCommand::Connect { node_index: node }) {
+            if let Err(e) = ipc.send_command(IpcCommand::Connect { node_index: node as usize }) {
                 display::print_error(&format!("Failed to send connect command: {e}"));
                 std::process::exit(1);
             }
