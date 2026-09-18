@@ -40,3 +40,21 @@ impl AppState {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_mock_state_initialization() {
+        let state = AppState::new_mock();
+        let users = state.users.read().await;
+        let nodes = state.nodes.read().await;
+
+        assert_eq!(users.len(), 1);
+        assert!(users.contains_key("mock-token-123"));
+        
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].location, "Frankfurt, DE");
+    }
+}
