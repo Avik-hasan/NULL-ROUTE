@@ -21,3 +21,23 @@ pub enum Commands {
     /// Checks the current connection status and daemon telemetry
     Status,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_connect_parsing() {
+        let cli = Cli::parse_from(&["vpn-cli", "connect", "--node", "5"]);
+        match cli.command {
+            Commands::Connect { node } => assert_eq!(node, 5),
+            _ => panic!("Expected Connect command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_disconnect_parsing() {
+        let cli = Cli::parse_from(&["vpn-cli", "disconnect"]);
+        assert!(matches!(cli.command, Commands::Disconnect));
+    }
+}
